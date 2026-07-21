@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AETHER ENGINE | Dev Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #050505; color: #00ffcc; font-family: 'Consolas', monospace; }
+        canvas { display: block; }
+        #dev-panel {
+            position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8);
+            padding: 15px; border: 1px solid #00ffcc; border-radius: 4px;
+            pointer-events: none; font-size: 12px; line-height: 1.6;
+        }
+        .metric { display: flex; justify-content: space-between; width: 200px; }
+        .val { color: #fff; }
+        #loading-screen {
+            position: fixed; inset: 0; background: #000; display: flex;
+            flex-direction: column; justify-content: center; align-items: center;
+            z-index: 1000; transition: opacity 0.8s ease;
+        }
+        .spinner { width: 40px; height: 40px; border: 3px solid #00ffcc; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <p>BOOTING AETHER KERNEL...</p>
+    </div>
+    <div id="dev-panel">
+        <div style="font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #00ffcc;">AETHER ENGINE v1.0</div>
+        <div class="metric"><span>FPS:</span> <span id="fps" class="val">0</span></div>
+        <div class="metric"><span>ENTITIES:</span> <span id="ent-count" class="val">0</span></div>
+        <div class="metric"><span>GPU:</span> <span id="gpu-id" class="val">...</span></div>
+        <div class="metric"><span>QUALITY:</span> <span id="q-level" class="val">...</span></div>
+        <div class="metric"><span>PHYSICS:</span> <span class="val">60Hz Fixed</span></div>
+    </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        /**
+         * EVENT BUS
+         * Decouples game systems. (e.g., Physics doesn't need to know about Sound)
+         */
+        class EventBus {
+            constructor() { this.events = {}; }
+            on(event, cb) { if(!this.events[event]) this.events[event] = []; this.events[event].push(cb); }
+            emit(event, data) { if(this.events[event]) this.events[event].forEach(cb => cb(data)); }
+        }
+        /**
+         * INPUT MANAGER
+         * Unified polling for any input device.
+         */
+        class InputManager {
+            constructor() {
+                this.keys = {};
+                window.addEventListener('keydown', e => this.keys[e.code] = true);
+                window.addEventListener('keyup', e => this.keys[e.code] = false);
+                window.addEventListener('blur', () => { this.keys = {}; }); // prevent stuck keys
+            }
+            isPressed(code) { return !!this.keys[code]; }
+        }
+        /**
+         * PHYSICS KERNEL
+         * Impulse-based collision resolution.
+         */
+        class PhysicsKernel {
+            constructor() {
+                this.gravity = new THREE.Vector3(0, -9.81, 0);
+                this.bodies = [];
+                this.damping = 2.0; // linear damping to stop infinite sliding / bound acceleration
+            }
+            addBody(entity) { this.bodies.push(entity); }
+            update(dt) {
+                for (let i = 0; i < this.bodies.length; i++) {
+                    const a = this.bodies[i];
+                    if (a.physics.isStatic) continue;
+                    // Velocity Integration
+                    a.physics.vel.add(this.gravity.clone().multiplyScalar(dt));
+                    a.mesh.position.add(a.physics.vel.clone().multiplyScalar(dt));
+                    // Damping
+                    a.physics.vel.multiplyScalar(Math.max(0, 1 - this.damping * dt));
+                    // Collision Check
+                    for (let j = i + 1; j < this.bodies.length; j++) {
+                        const b = this.bodies[j];
+                        this.resolve(a, b);
+                    }
+                }
+            }
+            resolve(a, b) {
+                const dist = a.mesh.position.distanceTo(b.mesh.position);
+                const minDist = (a.physics.radius || 0.5) + (b.physics.radius || 0.5);
+                if (dist >= minDist) return;
+                let normal;
+                if (dist < 1e-8) {
+                    normal = new THREE.Vector3(0, 1, 0); // arbitrary separation direction
+                } else {
+                    normal = new THREE.Vector3().subVectors(a.mesh.position, b.mesh.position).normalize();
+                }
+                const relativeVelocity = new THREE.Vector3().subVectors(a.physics.vel, b.physics.vel);
+                const velAlongNormal = relativeVelocity.dot(normal);
+                if (velAlongNormal > 0) return;
+                const invMassA = (a.physics.isStatic || !isFinite(a.physics.mass) || a.physics.mass <= 0) ? 0 : 1 / a.physics.mass;
+                const invMassB = (b.physics.isStatic || !isFinite(b.physics.mass) || b.physics.mass <= 0) ? 0 : 1 / b.physics.mass;
+                if (invMassA + invMassB === 0) return;
+                const restitution = Math.min(a.physics.bounce || 0.3, b.physics.bounce || 0.3);
+                let j = -(1 + restitution) * velAlongNormal;
+                j /= (invMassA + invMassB);
+                const impulse = normal.clone().multiplyScalar(j);
+                if (!a.physics.isStatic) a.physics.vel.add(impulse.clone().multiplyScalar(invMassA));
+                if (!b.physics.isStatic) b.physics.vel.sub(impulse.clone().multiplyScalar(invMassB));
+                // Positional correction to prevent sinking
+                const percent = 0.2;
+                const slop = 0.01;
+                const penetration = minDist - dist;
+                const correction = Math.max(penetration - slop, 0) / (invMassA + invMassB) * percent;
+                const correctionVec = normal.clone().multiplyScalar(correction);
+                if(!a.physics.isStatic) a.mesh.position.add(correctionVec.clone().multiplyScalar(invMassA));
+                if(!b.physics.isStatic) b.mesh.position.sub(correctionVec.clone().multiplyScalar(invMassB));
+            }
+        }
+        /**
+         * AETHER ENGINE CORE
+         */
+        class AetherEngine {
+            constructor() {
+                this.events = new EventBus();
+                this.input = new InputManager();
+                this.physics = new PhysicsKernel();
+                this.entities = [];
+                this.clock = new THREE.Clock();
+                this.accumulator = 0;
+                this.fixedDt = 1 / 60;
+
+                this.init();
+            }
+            async init() {
+                this.setupHardware();
+                this.setupGraphics();
+                this.setupControls();
+
+                document.getElementById('loading-screen').style.opacity = '0';
+                setTimeout(() => document.getElementById('loading-screen').remove(), 800);
+
+                this.loop();
+            }
+            setupHardware() {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl');
+                const debug = gl.getExtension('WEBGL_debug_renderer_info');
+                const gpu = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : "Generic GPU";
+
+                this.quality = {
+                    shadows: navigator.hardwareConcurrency > 4,
+                    ratio: navigator.deviceMemory > 4 ? 2 : 1,
+                    level: navigator.hardwareConcurrency > 8 ? 'ULTRA' : (navigator.hardwareConcurrency > 4 ? 'HIGH' : 'LOW')
+                };
+                document.getElementById('gpu-id').innerText = gpu.split(' ').pop();
+                document.getElementById('q-level').innerText = this.quality.level;
+            }
+            setupGraphics() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x020205);
+                this.scene.fog = new THREE.FogExp2(0x020205, 0.03);
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(10, 10, 10);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+                this.renderer.setPixelRatio(this.quality.ratio);
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = this.quality.shadows;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.renderer.toneMapping = THREE.ACESFilmicToneMapping; // Cinema quality
+                document.body.appendChild(this.renderer.domElement);
+                const amb = new THREE.AmbientLight(0x404040, 1);
+                this.scene.add(amb);
+                const sun = new THREE.DirectionalLight(0xffffff, 2);
+                sun.position.set(20, 20, 20);
+                sun.castShadow = true;
+                sun.shadow.camera.left = -25; sun.shadow.camera.right = 25;
+                sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
+                sun.shadow.mapSize.set(2048, 2048);
+                this.scene.add(sun);
+            }
+            setupControls() {
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+            }
+            /**
+             * The Dev's Dream API: Entity Creation
+             * Creates an object with integrated physics and a behavior loop.
+             */
+            createEntity({ mesh, physics = null, behavior = null }) {
+                const entity = {
+                    mesh: mesh,
+                    physics: physics || {
+                        vel: new THREE.Vector3(),
+                        mass: 1,
+                        bounce: 0.3,
+                        radius: 0.5,
+                        isStatic: false
+                    },
+                    behavior: behavior || (() => {}),
+                    id: Math.random().toString(36).substr(2, 9)
+                };
+                if(physics) this.physics.addBody(entity);
+                this.scene.add(mesh);
+                this.entities.push(entity);
+                return entity;
+            }
+            loop() {
+                requestAnimationFrame(() => this.loop());
+                const frameDt = Math.min(this.clock.getDelta(), 0.1);
+                // Fixed timestep for physics + behaviors (matches UI claim)
+                this.accumulator += frameDt;
+                while (this.accumulator >= this.fixedDt) {
+                    this.physics.update(this.fixedDt);
+                    this.entities.forEach(ent => ent.behavior(ent, this.fixedDt, this));
+                    this.accumulator -= this.fixedDt;
+                }
+                // Render Step (variable)
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+                // Dev Metrics
+                if (frameDt > 0) document.getElementById('fps').innerText = Math.round(1 / frameDt);
+                document.getElementById('ent-count').innerText = this.entities.length;
+            }
+        }
+        // ====================================================================
+        // GAME IMPLEMENTATION (The "Dev" part)
+        // ====================================================================
+        const Engine = new AetherEngine();
+        // Create a Ground (large sphere for nearly-flat surface under pure sphere physics)
+        const groundRadius = 500;
+        const ground = Engine.createEntity({
+            mesh: new THREE.Mesh(
+                new THREE.SphereGeometry(groundRadius, 48, 48),
+                new THREE.MeshStandardMaterial({ color: 0x111111 })
+            ),
+            physics: { vel: new THREE.Vector3(), mass: Infinity, bounce: 0.2, radius: groundRadius, isStatic: true }
+        });
+        ground.mesh.position.set(0, -groundRadius, 0);
+        ground.mesh.receiveShadow = true;
+        // Create a "Player" Sphere with custom behavior
+        const player = Engine.createEntity({
+            mesh: new THREE.Mesh(
+                new THREE.SphereGeometry(0.5),
+                new THREE.MeshStandardMaterial({ color: 0x00ffcc, metalness: 0.8, roughness: 0.2 })
+            ),
+            physics: { vel: new THREE.Vector3(), mass: 1, bounce: 0.7, radius: 0.5, isStatic: false },
+            behavior: (self, dt, eng) => {
+                // Kinematic movement via the Input Manager
+                const speed = 10 * dt;
+                if(eng.input.isPressed('KeyW')) self.physics.vel.z -= speed;
+                if(eng.input.isPressed('KeyS')) self.physics.vel.z += speed;
+                if(eng.input.isPressed('KeyA')) self.physics.vel.x -= speed;
+                if(eng.input.isPressed('KeyD')) self.physics.vel.x += speed;
+                // Soft horizontal clamp (preserves additive style, prevents any residual runaway)
+                const maxH = 15;
+                const hLen = Math.hypot(self.physics.vel.x, self.physics.vel.z);
+                if (hLen > maxH) {
+                    const s = maxH / hLen;
+                    self.physics.vel.x *= s;
+                    self.physics.vel.z *= s;
+                }
+                if(eng.input.isPressed('Space') && self.mesh.position.y <= 0.65) {
+                    self.physics.vel.y = 5;
+                    eng.events.emit('jump', { entity: self });
+                }
+            }
+        });
+        player.mesh.position.set(0, 5, 0);
+        player.mesh.castShadow = true;
+        // Add some random physics objects
+        for(let i=0; i<30; i++) {
+            Engine.createEntity({
+                mesh: new THREE.Mesh(
+                    new THREE.BoxGeometry(0.5, 0.5, 0.5),
+                    new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
+                ),
+                physics: { vel: new THREE.Vector3(), mass: 1, bounce: 0.4, radius: 0.4, isStatic: false },
+                behavior: (self) => {
+                    // Spin objects slowly
+                    self.mesh.rotation.x += 0.01;
+                }
+            });
+            // Randomize spawn
+            const ent = Engine.entities[Engine.entities.length - 1];
+            ent.mesh.position.set(Math.random()*10-5, 5+i, Math.random()*10-5);
+            ent.mesh.castShadow = true;
+        }
+        // Listen to the Event Bus
+        Engine.events.on('jump', (data) => {
+            console.log(`Entity ${data.entity.id} performed a jump!`);
+            // Here you would trigger a sound effect or particle system
+        });
+        window.addEventListener('resize', () => {
+            Engine.camera.aspect = window.innerWidth / window.innerHeight;
+            Engine.camera.updateProjectionMatrix();
+            Engine.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
