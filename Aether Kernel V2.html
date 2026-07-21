@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AETHER ENGINE | Amplified</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; color: #00ffcc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 0 0 10px #00ffcc; }
+        .stat-box { background: rgba(0,0,0,0.7); padding: 10px; border: 1px solid #00ffcc; border-radius: 8px; min-width: 220px; }
+        .row { display: flex; justify-content: space-between; font-size: 12px; margin: 4px 0; }
+        .val { color: white; font-weight: bold; }
+        #loading { position: fixed; inset: 0; background: #000; display: flex; justify-content: center; align-items: center; z-index: 100; transition: 0.5s; }
+    </style>
+</head>
+<body>
+    <div id="loading">Initializing Seamless Kernel...</div>
+    <div id="ui">
+        <div class="stat-box">
+            <div style="font-weight: bold; border-bottom: 1px solid #00ffcc; margin-bottom: 8px;">AETHER ENGINE v2.0 (AMP)</div>
+            <div class="row"><span>FPS:</span> <span id="fps" class="val">0</span></div>
+            <div class="row"><span>ENTITIES:</span> <span id="ent" class="val">0</span></div>
+            <div class="row"><span>PHYS-CHECKS:</span> <span id="checks" class="val">0</span></div>
+            <div class="row"><span>GRID-CELLS:</span> <span id="cells" class="val">0</span></div>
+        </div>
+    </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        /**
+         * VECTOR POOL
+         * Eliminates Garbage Collection (GC) spikes.
+         * Reuses vectors instead of creating new ones.
+         */
+        const Pool = {
+            v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(),
+            v4: new THREE.Vector3(), v5: new THREE.Vector3(), v6: new THREE.Vector3()
+        };
+
+        /**
+         * SPATIAL HASH GRID
+         * Fixed: queries the full 3×3×3 neighborhood so border collisions are not missed.
+         */
+        class SpatialHash {
+            constructor(cellSize = 4) {
+                this.cellSize = cellSize;
+                this.grid = new Map();
+            }
+            key(x, y, z) {
+                return `${x},${y},${z}`;
+            }
+            clear() { this.grid.clear(); }
+            insert(entity) {
+                const p = entity.mesh.position;
+                const k = this.key(
+                    Math.floor(p.x / this.cellSize),
+                    Math.floor(p.y / this.cellSize),
+                    Math.floor(p.z / this.cellSize)
+                );
+                if (!this.grid.has(k)) this.grid.set(k, []);
+                this.grid.get(k).push(entity);
+            }
+            getNearby(entity) {
+                const p = entity.mesh.position;
+                const cx = Math.floor(p.x / this.cellSize);
+                const cy = Math.floor(p.y / this.cellSize);
+                const cz = Math.floor(p.z / this.cellSize);
+                const result = [];
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dz = -1; dz <= 1; dz++) {
+                            const cell = this.grid.get(this.key(cx + dx, cy + dy, cz + dz));
+                            if (cell) {
+                                for (let i = 0; i < cell.length; i++) result.push(cell[i]);
+                            }
+                        }
+                    }
+                }
+                return result;
+            }
+            getCellCount() { return this.grid.size; }
+        }
+
+        /**
+         * AMPLIFIED PHYSICS KERNEL
+         */
+        class PhysicsKernel {
+            constructor() {
+                this.gravity = new THREE.Vector3(0, -12, 0);
+                this.bodies = [];
+                this.hash = new SpatialHash(4);
+                this.checkCount = 0;
+                this.damping = 1.6; // mild global damping so the 500 cubes eventually settle
+            }
+            addBody(entity) { this.bodies.push(entity); }
+            update(dt) {
+                this.checkCount = 0;
+                this.hash.clear();
+
+                // 1. Integration + mild damping + spatial insertion
+                for (let i = 0; i < this.bodies.length; i++) {
+                    const b = this.bodies[i];
+                    if (!b.physics.isStatic) {
+                        Pool.v1.copy(this.gravity).multiplyScalar(dt);
+                        b.physics.vel.add(Pool.v1);
+                        Pool.v2.copy(b.physics.vel).multiplyScalar(dt);
+                        b.mesh.position.add(Pool.v2);
+                        // Mild linear damping
+                        b.physics.vel.multiplyScalar(Math.max(0, 1 - this.damping * dt));
+                    }
+                    this.hash.insert(b);
+                }
+
+                // 2. Grid-based collision – each unordered pair processed exactly once
+                for (let i = 0; i < this.bodies.length; i++) {
+                    const a = this.bodies[i];
+                    const nearby = this.hash.getNearby(a);
+                    for (let j = 0; j < nearby.length; j++) {
+                        const b = nearby[j];
+                        // Unique pair filter (mesh.id is unique and already allocated)
+                        if (a === b || a.mesh.id > b.mesh.id) continue;
+                        this.checkCount++;
+                        this.resolve(a, b);
+                    }
+                }
+            }
+            resolve(a, b) {
+                // Position difference
+                Pool.v1.subVectors(a.mesh.position, b.mesh.position);
+                const distSq = Pool.v1.lengthSq();
+                const rA = a.physics.radius || 0.5;
+                const rB = b.physics.radius || 0.5;
+                const minDist = rA + rB;
+                if (distSq >= minDist * minDist) return;
+
+                let dist = Math.sqrt(distSq);
+                if (dist < 1e-8) {
+                    Pool.v1.set(0, 1, 0);
+                    dist = 1e-8;
+                } else {
+                    Pool.v1.multiplyScalar(1 / dist); // normalize in place → unit normal
+                }
+                // Pool.v1 is now the unit normal
+
+                // Explicit inverse mass (safe for Infinity / static / ≤ 0)
+                const invMassA = (a.physics.isStatic || !isFinite(a.physics.mass) || a.physics.mass <= 0) ? 0 : 1 / a.physics.mass;
+                const invMassB = (b.physics.isStatic || !isFinite(b.physics.mass) || b.physics.mass <= 0) ? 0 : 1 / b.physics.mass;
+                const invSum = invMassA + invMassB;
+                if (invSum === 0) return;
+
+                // Relative velocity
+                Pool.v2.subVectors(a.physics.vel, b.physics.vel);
+                const sepVel = Pool.v2.dot(Pool.v1);
+                if (sepVel > 0) return;
+
+                const bounce = Math.min(a.physics.bounce ?? 0.3, b.physics.bounce ?? 0.3);
+                let j = -(1 + bounce) * sepVel / invSum;
+
+                // Impulse (allocation-free)
+                Pool.v3.copy(Pool.v1).multiplyScalar(j);
+                if (invMassA > 0) a.physics.vel.addScaledVector(Pool.v3, invMassA);
+                if (invMassB > 0) b.physics.vel.addScaledVector(Pool.v3, -invMassB);
+
+                // Penetration correction (small slop + proper invMass weighting)
+                const percent = 0.35;
+                const slop = 0.01;
+                const pen = minDist - dist;
+                if (pen > slop) {
+                    const corrMag = (pen - slop) * percent / invSum;
+                    if (invMassA > 0) a.mesh.position.addScaledVector(Pool.v1, corrMag * invMassA);
+                    if (invMassB > 0) b.mesh.position.addScaledVector(Pool.v1, -corrMag * invMassB);
+                }
+            }
+        }
+
+        class AetherEngine {
+            constructor() {
+                this.physics = new PhysicsKernel();
+                this.entities = [];
+                this.clock = new THREE.Clock();
+                this.input = { keys: {} };
+                this.init();
+            }
+            async init() {
+                window.addEventListener('keydown', e => this.input.keys[e.code] = true);
+                window.addEventListener('keyup', e => this.input.keys[e.code] = false);
+                window.addEventListener('blur', () => { this.input.keys = {}; }); // prevent stuck keys
+                this.setupGraphics();
+                document.getElementById('loading').style.opacity = '0';
+                setTimeout(() => document.getElementById('loading').remove(), 500);
+                this.loop();
+            }
+            setupGraphics() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x010103);
+                this.scene.fog = new THREE.FogExp2(0x010103, 0.04);
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(15, 15, 15);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+                this.renderer.setPixelRatio(window.devicePixelRatio > 2 ? 2 : window.devicePixelRatio);
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                document.body.appendChild(this.renderer.domElement);
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                const sun = new THREE.DirectionalLight(0xffffff, 2);
+                sun.position.set(20, 30, 20);
+                sun.castShadow = true;
+                sun.shadow.mapSize.set(2048, 2048);
+                this.scene.add(sun, new THREE.AmbientLight(0x404040, 1));
+            }
+            createEntity({ mesh, physics = null, behavior = null }) {
+                const entity = {
+                    mesh: mesh,
+                    physics: physics || { vel: new THREE.Vector3(), mass: 1, bounce: 0.3, radius: 0.5, isStatic: false },
+                    behavior: behavior || (() => {}),
+                };
+                if (physics) this.physics.addBody(entity);
+                this.scene.add(mesh);
+                this.entities.push(entity);
+                return entity;
+            }
+            loop() {
+                requestAnimationFrame(() => this.loop());
+                const dt = Math.min(this.clock.getDelta(), 0.1);
+                this.physics.update(dt);
+                this.entities.forEach(ent => ent.behavior(ent, dt, this));
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+                document.getElementById('fps').innerText = Math.round(1 / dt);
+                document.getElementById('ent').innerText = this.entities.length;
+                document.getElementById('checks').innerText = this.physics.checkCount;
+                document.getElementById('cells').innerText = this.physics.hash.getCellCount();
+            }
+        }
+
+        // ====================================================================
+        // IMPLEMENTATION
+        // ====================================================================
+        const Engine = new AetherEngine();
+
+        // Ground – large sphere so pure sphere-sphere physics produces a usable nearly-flat surface
+        const groundRadius = 500;
+        const ground = Engine.createEntity({
+            mesh: new THREE.Mesh(
+                new THREE.SphereGeometry(groundRadius, 48, 48),
+                new THREE.MeshStandardMaterial({ color: 0x0a0a0a })
+            ),
+            physics: { vel: new THREE.Vector3(), mass: Infinity, bounce: 0.1, radius: groundRadius, isStatic: true }
+        });
+        ground.mesh.position.set(0, -groundRadius, 0);
+        ground.mesh.receiveShadow = true;
+
+        // KCC Player
+        const player = Engine.createEntity({
+            mesh: new THREE.Mesh(
+                new THREE.SphereGeometry(0.5),
+                new THREE.MeshStandardMaterial({ color: 0x00ffcc, emissive: 0x00ffcc, emissiveIntensity: 0.5 })
+            ),
+            physics: { vel: new THREE.Vector3(), mass: 1, bounce: 0, radius: 0.5, isStatic: false },
+            behavior: (self, dt, eng) => {
+                const moveSpeed = 15 * dt;
+                if (eng.input.keys['KeyW']) self.physics.vel.z -= moveSpeed;
+                if (eng.input.keys['KeyS']) self.physics.vel.z += moveSpeed;
+                if (eng.input.keys['KeyA']) self.physics.vel.x -= moveSpeed;
+                if (eng.input.keys['KeyD']) self.physics.vel.x += moveSpeed;
+                if (eng.input.keys['Space'] && self.mesh.position.y <= 0.65) self.physics.vel.y = 6;
+
+                // Friction (Drag) – approximately frame-rate independent
+                const damp = Math.pow(0.9, dt * 60);
+                self.physics.vel.x *= damp;
+                self.physics.vel.z *= damp;
+            }
+        });
+        player.mesh.position.set(0, 5, 0);
+        player.mesh.castShadow = true;
+
+        // MASSIVE STRESS TEST: 500 physical cubes
+        for (let i = 0; i < 500; i++) {
+            Engine.createEntity({
+                mesh: new THREE.Mesh(
+                    new THREE.BoxGeometry(0.6, 0.6, 0.6),
+                    new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
+                ),
+                physics: { vel: new THREE.Vector3(), mass: 1, bounce: 0.4, radius: 0.35, isStatic: false }
+            });
+            const ent = Engine.entities[Engine.entities.length - 1];
+            ent.mesh.position.set(Math.random() * 40 - 20, 2 + Math.random() * 40, Math.random() * 40 - 20);
+            ent.mesh.castShadow = true;
+        }
+
+        window.addEventListener('resize', () => {
+            Engine.camera.aspect = window.innerWidth / window.innerHeight;
+            Engine.camera.updateProjectionMatrix();
+            Engine.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
