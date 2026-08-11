@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CSGKernel · three.js Boolean Kernel</title>
+  <style>
+    :root {
+      --bg: #0a0c10;
+      --panel: rgba(12, 16, 24, 0.88);
+      --line: #1e2a3a;
+      --accent: #3dffa8;
+      --accent2: #6eb6ff;
+      --warn: #ffb14a;
+      --text: #d8e2ee;
+      --muted: #7a8a9e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    canvas { display: block; }
+    #ui {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      width: min(320px, calc(100vw - 32px));
+      pointer-events: none;
+    }
+    .panel {
+      pointer-events: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .sub {
+      margin: 0 0 12px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .ops {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #121822;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    button:hover { border-color: var(--accent2); color: #fff; }
+    button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(61, 255, 168, 0.08);
+      box-shadow: 0 0 0 1px rgba(61, 255, 168, 0.15) inset;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      margin: 5px 0;
+      color: var(--muted);
+    }
+    .row b { color: var(--text); font-variant-numeric: tabular-nums; }
+    .toggles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .toggles button { flex: 1; min-width: 90px; font-weight: 500; }
+    #hint {
+      position: absolute;
+      bottom: 14px;
+      left: 16px;
+      font-size: 11px;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    #badge {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel);
+      pointer-events: none;
+    }
+    a.repo {
+      color: var(--accent2);
+      text-decoration: none;
+    }
+    a.repo:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="panel">
+      <h1>CSGKernel</h1>
+      <p class="sub">
+        Proper BSP boolean kernel for three.js — BufferGeometry, world matrices,
+        coplanar-safe. For the fren who said there are no good kernels.
+      </p>
+      <div class="ops">
+        <button id="btn-union" class="active" data-op="union">Union</button>
+        <button id="btn-subtract" data-op="subtract">Subtract</button>
+        <button id="btn-intersect" data-op="intersect">Intersect</button>
+      </div>
+      <div class="row"><span>Operation</span><b id="op-name">A ∪ B</b></div>
+      <div class="row"><span>Result tris</span><b id="tris">—</b></div>
+      <div class="row"><span>Build time</span><b id="ms">—</b></div>
+      <div class="row"><span>FPS</span><b id="fps">—</b></div>
+      <div class="toggles">
+        <button id="btn-wire">Wireframe</button>
+        <button id="btn-inputs">Show A / B</button>
+        <button id="btn-spin" class="active">Spin</button>
+      </div>
+      <p class="sub" style="margin:12px 0 0">
+        Source: <a class="repo" href="https://github.com/BHTANK/Three.JS-Lab/tree/main/csg-kernel" target="_blank" rel="noopener">csg-kernel/</a>
+      </p>
+    </div>
+  </div>
+  <div id="badge">three.js r160 · BSP</div>
+  <div id="hint">Drag orbit · scroll zoom · pick an op above</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { CSG } from './CSGKernel.js';
+
+    // ── renderer / scene ──────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setClearColor(0x0a0c10, 1);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0a0c10, 18, 42);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(5.2, 3.6, 6.4);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0.4, 0);
+
+    // lights
+    scene.add(new THREE.AmbientLight(0x406080, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(6, 10, 4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x6eb6ff, 0.35);
+    fill.position.set(-5, 3, -4);
+    scene.add(fill);
+
+    // ground
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(12, 64),
+      new THREE.MeshStandardMaterial({ color: 0x121820, metalness: 0.2, roughness: 0.9 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -1.35;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(12, 24, 0x1e2a3a, 0x151c28);
+    grid.position.y = -1.34;
+    scene.add(grid);
+
+    // ── operand meshes (visual guides) ────────────────────────────────────
+    const matA = new THREE.MeshStandardMaterial({
+      color: 0x3dffa8, transparent: true, opacity: 0.18,
+      metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide, depthWrite: false
+    });
+    const matB = new THREE.MeshStandardMaterial({
+      color: 0x6eb6ff, transparent: true, opacity: 0.18,
+      metalness: 0.1, roughness: 0.5, side: THREE.DoubleSide, depthWrite: false
+    });
+    const matResult = new THREE.MeshStandardMaterial({
+      color: 0xe8f0ff, metalness: 0.35, roughness: 0.32,
+      flatShading: false, side: THREE.DoubleSide
+    });
+    const matWire = new THREE.MeshBasicMaterial({
+      color: 0x3dffa8, wireframe: true, transparent: true, opacity: 0.55
+    });
+
+    const meshA = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 2.2, 1, 1, 1), matA);
+    const meshB = new THREE.Mesh(new THREE.SphereGeometry(1.35, 24, 16), matB);
+    meshA.position.set(-0.35, 0.15, 0);
+    meshB.position.set(0.55, 0.35, 0.15);
+    meshA.visible = false;
+    meshB.visible = false;
+    scene.add(meshA, meshB);
+
+    let resultMesh = null;
+    let wireMesh = null;
+    let currentOp = 'union';
+    let showWire = false;
+    let showInputs = false;
+    let spin = true;
+
+    const OP_LABEL = {
+      union: 'A ∪ B',
+      subtract: 'A \\ B',
+      intersect: 'A ∩ B'
+    };
+
+    function rebuild() {
+      meshA.updateWorldMatrix(true, false);
+      meshB.updateWorldMatrix(true, false);
+
+      const t0 = performance.now();
+      let mesh;
+      if (currentOp === 'union') mesh = CSG.union(meshA, meshB, { material: matResult });
+      else if (currentOp === 'subtract') mesh = CSG.subtract(meshA, meshB, { material: matResult });
+      else mesh = CSG.intersect(meshA, meshB, { material: matResult });
+      const ms = performance.now() - t0;
+
+      if (resultMesh) {
+        scene.remove(resultMesh);
+        resultMesh.geometry.dispose();
+      }
+      if (wireMesh) {
+        scene.remove(wireMesh);
+        wireMesh.geometry.dispose();
+      }
+
+      resultMesh = mesh;
+      resultMesh.castShadow = true;
+      resultMesh.receiveShadow = true;
+      scene.add(resultMesh);
+
+      wireMesh = new THREE.Mesh(resultMesh.geometry, matWire);
+      wireMesh.visible = showWire;
+      scene.add(wireMesh);
+
+      const tris = resultMesh.geometry.attributes.position.count / 3;
+      document.getElementById('tris').textContent = Math.round(tris).toLocaleString();
+      document.getElementById('ms').textContent = ms.toFixed(1) + ' ms';
+      document.getElementById('op-name').textContent = OP_LABEL[currentOp];
+    }
+
+    // ── UI wiring ─────────────────────────────────────────────────────────
+    document.querySelectorAll('.ops button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.ops button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentOp = btn.dataset.op;
+        rebuild();
+      });
+    });
+
+    document.getElementById('btn-wire').addEventListener('click', e => {
+      showWire = !showWire;
+      e.currentTarget.classList.toggle('active', showWire);
+      if (wireMesh) wireMesh.visible = showWire;
+    });
+
+    document.getElementById('btn-inputs').addEventListener('click', e => {
+      showInputs = !showInputs;
+      e.currentTarget.classList.toggle('active', showInputs);
+      meshA.visible = showInputs;
+      meshB.visible = showInputs;
+    });
+
+    document.getElementById('btn-spin').addEventListener('click', e => {
+      spin = !spin;
+      e.currentTarget.classList.toggle('active', spin);
+    });
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ── animate ───────────────────────────────────────────────────────────
+    let frames = 0, lastFps = performance.now();
+    const clock = new THREE.Clock();
+
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = clock.getDelta();
+      if (spin && resultMesh) {
+        resultMesh.rotation.y += dt * 0.35;
+        if (wireMesh) wireMesh.rotation.y = resultMesh.rotation.y;
+      }
+      controls.update();
+      renderer.render(scene, camera);
+
+      frames++;
+      const now = performance.now();
+      if (now - lastFps > 500) {
+        document.getElementById('fps').textContent = Math.round(frames * 1000 / (now - lastFps));
+        frames = 0;
+        lastFps = now;
+      }
+    }
+
+    rebuild();
+    tick();
+  </script>
+</body>
+</html>
