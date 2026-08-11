@@ -1,0 +1,48 @@
+{
+  "name": "csg-kernel",
+  "version": "1.0.0",
+  "description": "Proper BSP Constructive Solid Geometry kernel for three.js — BufferGeometry, world matrices, multi-material, wall/door prefab helpers. Built for procedural web asset kits.",
+  "type": "module",
+  "main": "./CSGKernel.js",
+  "module": "./CSGKernel.js",
+  "types": "./CSGKernel.d.ts",
+  "exports": {
+    ".": {
+      "types": "./CSGKernel.d.ts",
+      "import": "./CSGKernel.js",
+      "default": "./CSGKernel.js"
+    }
+  },
+  "files": [
+    "CSGKernel.js",
+    "CSGKernel.d.ts",
+    "README.md",
+    "demo.html",
+    "wall-prefab.html"
+  ],
+  "peerDependencies": {
+    "three": ">=0.150.0"
+  },
+  "keywords": [
+    "three.js",
+    "threejs",
+    "csg",
+    "boolean",
+    "bsp",
+    "constructive-solid-geometry",
+    "mesh",
+    "kernel",
+    "procedural",
+    "wall",
+    "door",
+    "window"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BHTANK/Three.JS-Lab.git",
+    "directory": "csg-kernel"
+  },
+  "homepage": "https://github.com/BHTANK/Three.JS-Lab/tree/main/csg-kernel",
+  "author": "BHTANK"
+}
