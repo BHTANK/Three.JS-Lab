@@ -11,11 +11,17 @@
       "types": "./CSGKernel.d.ts",
       "import": "./CSGKernel.js",
       "default": "./CSGKernel.js"
+    },
+    "./mono": {
+      "import": "./CSGKernel.mono.js",
+      "default": "./CSGKernel.mono.js"
     }
   },
   "files": [
     "CSGKernel.js",
+    "CSGKernel.mono.js",
     "CSGKernel.d.ts",
+    "src",
     "README.md",
     "demo.html",
     "wall-prefab.html"
