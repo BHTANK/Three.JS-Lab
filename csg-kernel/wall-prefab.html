@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CSGKernel · Wall / Door / Window Prefab</title>
+  <style>
+    :root {
+      --bg: #0c0e12; --panel: rgba(14,18,26,0.92); --line: #243044;
+      --accent: #3dffa8; --accent2: #6eb6ff; --text: #e2eaf4; --muted: #7a8a9e;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif; }
+    canvas { display: block; }
+    #ui { position: absolute; top: 16px; left: 16px; width: min(340px, calc(100vw - 32px)); }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px 16px; backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    }
+    h1 { margin: 0 0 4px; font-size: 15px; color: var(--accent); }
+    .sub { margin: 0 0 12px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+    .ops { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+    button {
+      appearance: none; border: 1px solid var(--line); background: #121822;
+      color: var(--text); border-radius: 8px; padding: 8px; font-size: 12px;
+      font-weight: 600; cursor: pointer;
+    }
+    button:hover { border-color: var(--accent2); }
+    button.active {
+      border-color: var(--accent); color: var(--accent);
+      background: rgba(61,255,168,0.08);
+    }
+    .row { display: flex; justify-content: space-between; font-size: 12px;
+      margin: 5px 0; color: var(--muted); }
+    .row b { color: var(--text); font-variant-numeric: tabular-nums; }
+    #hint { position: absolute; bottom: 14px; left: 16px; font-size: 11px; color: var(--muted); }
+    code { font-size: 10px; color: var(--accent2); }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="panel">
+      <h1>Wall / Door / Window</h1>
+      <p class="sub">
+        The pain this kernel targets: z-fighting stacks, gaps between doors and frames,
+        “codex math ain’t mathing.” One manifold wall, true boolean openings, fitted frame.
+        <br/><br/>
+        For <code>@alightinastorm</code> procedural prefab kits — not another coplanar plane stack.
+      </p>
+      <div class="ops">
+        <button id="btn-wall-door" class="active">Wall + door</button>
+        <button id="btn-multi">Wall + 2 windows</button>
+        <button id="btn-merge">Merged solid</button>
+        <button id="btn-wire">Wireframe</button>
+      </div>
+      <div class="row"><span>Tris</span><b id="tris">—</b></div>
+      <div class="row"><span>Build</span><b id="ms">—</b></div>
+      <div class="row"><span>Mode</span><b id="mode">wall + door frame</b></div>
+      <p class="sub" style="margin-top:12px;margin-bottom:0">
+        API: <code>wallWithDoor()</code> · <code>wallWithOpenings()</code> · <code>doorFrame()</code>
+      </p>
+    </div>
+  </div>
+  <div id="hint">Orbit drag · scroll zoom · compare: one mesh, no gaps</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import {
+      wallWithDoor, wallWithOpenings, doorFrame, CSG
+    } from './CSGKernel.js';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setClearColor(0x0c0e12, 1);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0c0e12, 14, 40);
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+    camera.position.set(5.5, 2.8, 6.5);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0.4, 0);
+
+    scene.add(new THREE.AmbientLight(0x6080a0, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(5, 9, 4);
+    key.castShadow = true;
+    scene.add(key);
+    scene.add(new THREE.DirectionalLight(0x6eb6ff, 0.3).translateX(-4).translateY(2));
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(14, 64),
+      new THREE.MeshStandardMaterial({ color: 0x141a22, roughness: 0.95 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -1.55;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    scene.add(new THREE.GridHelper(12, 24, 0x243044, 0x151c28).translateY(-1.54));
+
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0xc4b7a6, roughness: 0.88, metalness: 0.04, side: THREE.DoubleSide
+    });
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: 0x4a3428, roughness: 0.65, metalness: 0.08, side: THREE.DoubleSide
+    });
+    const wireMat = new THREE.MeshBasicMaterial({
+      color: 0x3dffa8, wireframe: true, transparent: true, opacity: 0.45
+    });
+
+    let root = new THREE.Group();
+    scene.add(root);
+    let wireOn = false;
+    let mode = 'wall-door';
+
+    function clearRoot() {
+      while (root.children.length) {
+        const c = root.children.pop();
+        c.traverse?.(o => {
+          if (o.geometry) o.geometry.dispose();
+        });
+      }
+    }
+
+    function countTris(obj) {
+      let n = 0;
+      obj.traverse(o => {
+        if (o.isMesh && o.geometry?.attributes?.position) {
+          n += o.geometry.attributes.position.count / 3;
+        }
+      });
+      return n;
+    }
+
+    function build() {
+      clearRoot();
+      const t0 = performance.now();
+      let label = '';
+
+      if (mode === 'wall-door') {
+        const { group } = wallWithDoor({
+          width: 5, height: 3, thickness: 0.28,
+          doorW: 1.05, doorH: 2.15, doorX: -0.6,
+          wallMaterial: wallMat, frameMaterial: frameMat
+        });
+        root.add(group);
+        label = 'wall + fitted door frame';
+      } else if (mode === 'multi') {
+        const { mesh } = wallWithOpenings({
+          width: 6, height: 3.2, thickness: 0.28,
+          openings: [
+            { x: -1.6, y: 0.2, w: 1.2, h: 1.2 },
+            { x: 1.4, y: 0.2, w: 1.2, h: 1.2 },
+            { x: 0, y: -0.45, w: 1.0, h: 2.1 }
+          ],
+          wallMaterial: wallMat
+        });
+        root.add(mesh);
+        // fitted frames for each opening
+        const specs = [
+          { x: -1.6, y: 0.2, w: 1.2, h: 1.2 },
+          { x: 1.4, y: 0.2, w: 1.2, h: 1.2 },
+          { x: 0, y: -0.45, w: 1.0, h: 2.1 }
+        ];
+        for (const s of specs) {
+          const f = doorFrame({
+            openingW: s.w, openingH: s.h, depth: 0.32,
+            frameThickness: 0.07, material: frameMat
+          });
+          f.mesh.position.set(s.x, s.y, 0);
+          root.add(f.mesh);
+        }
+        label = 'wall − 2 windows − door + frames';
+      } else if (mode === 'merge') {
+        const { mesh } = wallWithDoor({
+          width: 5, height: 3, thickness: 0.28,
+          doorW: 1.05, doorH: 2.15, doorX: 0.4,
+          merge: true,
+          wallMaterial: wallMat, frameMaterial: frameMat
+        });
+        root.add(mesh);
+        label = 'single merged solid (union)';
+      }
+
+      if (wireOn) {
+        root.traverse(o => {
+          if (o.isMesh && o.material !== wireMat) {
+            const w = new THREE.Mesh(o.geometry, wireMat);
+            w.position.copy(o.position);
+            w.rotation.copy(o.rotation);
+            w.scale.copy(o.scale);
+            root.add(w);
+          }
+        });
+      }
+
+      const ms = performance.now() - t0;
+      document.getElementById('ms').textContent = ms.toFixed(1) + ' ms';
+      document.getElementById('tris').textContent = Math.round(countTris(root)).toLocaleString();
+      document.getElementById('mode').textContent = label;
+    }
+
+    document.getElementById('btn-wall-door').onclick = (e) => {
+      mode = 'wall-door';
+      document.querySelectorAll('.ops button').forEach(b => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+      build();
+    };
+    document.getElementById('btn-multi').onclick = (e) => {
+      mode = 'multi';
+      document.querySelectorAll('.ops button').forEach(b => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+      build();
+    };
+    document.getElementById('btn-merge').onclick = (e) => {
+      mode = 'merge';
+      document.querySelectorAll('.ops button').forEach(b => b.classList.remove('active'));
+      e.currentTarget.classList.add('active');
+      build();
+    };
+    document.getElementById('btn-wire').onclick = (e) => {
+      wireOn = !wireOn;
+      e.currentTarget.classList.toggle('active', wireOn);
+      build();
+    };
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    build();
+    (function tick() {
+      requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>
