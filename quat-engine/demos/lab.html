@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuatEngine lab</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0e14; color: #dbe4f0; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: absolute; left: 16px; top: 16px; font-size: 12px;
+      background: rgba(8,10,16,.72); border: 1px solid #243044; padding: 10px 12px;
+      max-width: min(92vw, 820px); line-height: 1.45;
+    }
+    #hint { position: absolute; left: 16px; bottom: 16px; font-size: 11px; opacity: .7; }
+    kbd { border: 1px solid #3a4a62; padding: 0 4px; }
+  </style>
+</head>
+<body>
+  <div id="hud">boot…</div>
+  <div id="hint">
+    <kbd>1</kbd> city · <kbd>2</kbd> race · <kbd>3</kbd> voxel · <kbd>4</kbd> arena ·
+    <kbd>F</kbd> car · <kbd>C</kbd> fly · <kbd>V</kbd> first/chase ·
+    <kbd>Q</kbd>/<kbd>E</kbd> place/mine · click lock + fire
+  </div>
+  <canvas id="c"></canvas>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import { QuatEngine, Quat } from '../QuatEngine.js';
+
+    // Probe 1: Hamilton i⊗j = +k  (Engine Room TEST 1)
+    const i = Quat.create(0, 1, 0, 0);
+    const j = Quat.create(0, 0, 1, 0);
+    const k = Quat.mul(i, j);
+    const hamilton = Math.abs(k[0]) < 1e-9 && Math.abs(k[1]) < 1e-9 && Math.abs(k[2]) < 1e-9 && Math.abs(k[3] - 1) < 1e-9;
+    if (!hamilton) console.error('FAIL Hamilton i*j != k', k);
+    else console.log('PASS Hamilton i⊗j = +k');
+
+    const yaw0 = Quat.fromYawPitch(0, 0);
+    if (Math.abs(yaw0[0] - 1) > 1e-9) console.error('FAIL yaw0', yaw0);
+    else console.log('PASS yaw0 identity');
+
+    const qY = Quat.fromAxisAngle([0, 1, 0], Math.PI / 2);
+    const v = Quat.rotateVec(qY, [1, 0, 0]);
+    if (Math.hypot(v[0], v[1], v[2] + 1) > 1e-6) console.error('FAIL 90Y', v);
+    else console.log('PASS 90° Y [1,0,0]→[0,0,-1]');
+
+    const canvas = document.getElementById('c');
+    const engine = new QuatEngine(canvas, { hud: document.getElementById('hud'), mode: 'city' });
+    engine.start();
+  </script>
+</body>
+</html>
