@@ -1,0 +1,51 @@
+{
+  "name": "quat-engine",
+  "version": "0.2.0",
+  "description": "Hamilton-quaternion game kernel for three.js — walk, drive, voxels, arena combat, world streaming. Orientation never uses Euler in the integrator.",
+  "type": "module",
+  "main": "./QuatEngine.js",
+  "module": "./QuatEngine.js",
+  "types": "./QuatEngine.d.ts",
+  "exports": {
+    ".": {
+      "types": "./QuatEngine.d.ts",
+      "import": "./QuatEngine.js",
+      "default": "./QuatEngine.js"
+    },
+    "./src/*": "./src/*"
+  },
+  "files": [
+    "QuatEngine.js",
+    "QuatEngine.d.ts",
+    "src",
+    "demos",
+    "test",
+    "README.md",
+    "CREDITS.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/quat.test.mjs"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "keywords": [
+    "three.js",
+    "quaternion",
+    "hamilton",
+    "game-engine",
+    "camera",
+    "vehicle",
+    "voxel",
+    "combat"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BHTANK/Three.JS-Lab.git",
+    "directory": "quat-engine"
+  },
+  "homepage": "https://github.com/BHTANK/Three.JS-Lab/tree/main/quat-engine",
+  "author": "BHTANK"
+}

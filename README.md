@@ -6,6 +6,31 @@ Public repo: [github.com/BHTANK/Three.JS-Lab](https://github.com/BHTANK/Three.JS
 
 ---
 
+## QuatEngine
+
+Hamilton-quaternion **game kernel** for three.js — walk, drive, voxel chunks, arena combat, world streaming. Orientation is `[w,x,y,z]` end-to-end; Three.js `(x,y,z,w)` only at the mesh/camera wall (Solà / Engine Room lock).
+
+This is the shared layer for GTA-class, Forza-class, Minecraft-class, and arena games. It does **not** claim those shipped titles as complete ports.
+
+| Path | What |
+|------|------|
+| [`quat-engine/README.md`](./quat-engine/README.md) | Convention lock + genre map |
+| [`quat-engine/QuatEngine.js`](./quat-engine/QuatEngine.js) | Public barrel |
+| [`quat-engine/demos/lab.html`](./quat-engine/demos/lab.html) | Modes 1–4 |
+| [`quat-engine/test/quat.test.mjs`](./quat-engine/test/quat.test.mjs) | Hamilton + physics self-test |
+
+```js
+import { QuatEngine, Quat } from './quat-engine/QuatEngine.js';
+const engine = new QuatEngine(canvas);
+engine.start();
+```
+
+```bash
+cd quat-engine && npm test
+```
+
+---
+
 ## CSGKernel
 
 Proper **BSP Constructive Solid Geometry** for three.js — the mesh boolean layer web prop kits actually need.
